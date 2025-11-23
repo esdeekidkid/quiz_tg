@@ -8,3 +8,4 @@ def extract_pdf_text(path):
             if t:
                 text += t + "\n"
     return text
+
