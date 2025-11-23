@@ -8,3 +8,4 @@ services:
     envVars:
       - key: BOT_TOKEN
         sync: false
+
