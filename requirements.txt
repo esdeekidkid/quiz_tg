@@ -3,3 +3,4 @@ flask
 pdfplumber
 beautifulsoup4
 rapidfuzz
+
