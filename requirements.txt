@@ -1,0 +1,8 @@
+python-telegram-bot==20.6
+flask
+pdfplumber
+beautifulsoup4
+sentence-transformers
+torch
+numpy
+requests
