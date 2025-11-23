@@ -1,7 +1,6 @@
 import os
 import tempfile
 import logging
-from flask import Flask
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -15,19 +14,13 @@ from utils.qa_engine import answer_questions_from_html
 
 logging.basicConfig(level=logging.INFO)
 
-app = Flask(__name__)
-
-# Хранилище лекций (каждый пользователь хранит свой PDF)
+# ===== Хранилище лекций =====
 LECTURES = {}
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+# ===== Вставляем токен прямо для локального запуска =====
+BOT_TOKEN = "8450032539:AAEBA42yybm20a9OS1vrUhI7pRh0u0tPuzg"
 
-@app.route("/")
-def home():
-    return "Bot is running on Render!"
-
-# ===== Telegram bot handlers =====
-
+# ===== Telegram handlers =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Привет! Загружайте PDF-лекцию, затем отправляйте HTML-код теста."
@@ -83,5 +76,3 @@ def run_bot():
 
 if __name__ == "__main__":
     run_bot()
-import os
-print("TOKEN =", os.getenv("BOT_TOKEN"))
