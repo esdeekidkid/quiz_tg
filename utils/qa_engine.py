@@ -5,14 +5,11 @@ def answer_questions_from_html(lecture_text, html):
     soup = BeautifulSoup(html, "html.parser")
 
     questions = []
-
-    # Ищем вопросы
     for block in soup.find_all(["div", "p", "li"]):
         txt = block.get_text(strip=True)
         if "?" in txt:
             questions.append({"question": txt, "options": []})
 
-    # Ищем варианты ответов
     for opt in soup.find_all(["label", "li", "span"]):
         text = opt.get_text(strip=True)
         if len(text) > 3 and questions:
@@ -26,23 +23,13 @@ def answer_questions_from_html(lecture_text, html):
         opts = q["options"]
         result += f"❓ {question}\n"
 
-        # Открытый вопрос
         if not opts:
-            best_match = process.extractOne(
-                query=question,
-                choices=lecture_sentences,
-                scorer=fuzz.token_sort_ratio
-            )
+            best_match = process.extractOne(query=question, choices=lecture_sentences, scorer=fuzz.token_sort_ratio)
             if best_match:
                 result += f"✔ Ответ: {best_match[0]}\n\n"
             continue
 
-        # Вопрос с вариантами
-        best_opt = process.extractOne(
-            query=question,
-            choices=opts,
-            scorer=fuzz.token_sort_ratio
-        )
+        best_opt = process.extractOne(query=question, choices=opts, scorer=fuzz.token_sort_ratio)
         if best_opt:
             result += f"✔ Ответ: {best_opt[0]}\n\n"
 
