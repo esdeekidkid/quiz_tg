@@ -83,3 +83,5 @@ def run_bot():
 
 if __name__ == "__main__":
     run_bot()
+import os
+print("TOKEN =", os.getenv("BOT_TOKEN"))
