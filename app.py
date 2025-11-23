@@ -17,8 +17,10 @@ logging.basicConfig(level=logging.INFO)
 # ===== Хранилище лекций =====
 LECTURES = {}
 
-# ===== Вставляем токен прямо для локального запуска =====
-BOT_TOKEN = "8450032539:AAEBA42yybm20a9OS1vrUhI7pRh0u0tPuzg"
+# ===== Токен из переменной окружения =====
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise ValueError("Не задан BOT_TOKEN. Установите переменную окружения BOT_TOKEN.")
 
 # ===== Telegram handlers =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -60,10 +62,6 @@ async def handle_html(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ===== Запуск бота =====
 def run_bot():
-    if not BOT_TOKEN:
-        print("Ошибка: BOT_TOKEN не установлен!")
-        return
-
     application = ApplicationBuilder().token(BOT_TOKEN).build()
 
     # Добавляем обработчики
