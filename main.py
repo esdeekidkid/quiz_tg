@@ -1,4 +1,9 @@
 import io
+import os
+import uuid
+import json
+from datetime import datetime, timedelta
+from functools import lru_cache
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -8,7 +13,7 @@ from typing import Optional, List
 import pdfplumber
 from bs4 import BeautifulSoup
 import re
-import json
+import httpx
 
 app = FastAPI(title="Quiz Helper API")
 
@@ -16,8 +21,15 @@ app = FastAPI(title="Quiz Helper API")
 templates = Jinja2Templates(directory="templates")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# --- Глобальное хранилище для сессии (в реальном проекте используйте Redis или БД)
-SESSION_STORAGE = {}
+# --- Supabase configuration ---
+SUPABASE_URL = os.getenv("VITE_SUPABASE_URL", "https://aozxmeovifobnfspfoqt.supabase.co")
+SUPABASE_KEY = os.getenv("VITE_SUPABASE_SUPABASE_ANON_KEY", "")
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", SUPABASE_KEY)
+
+# --- LRU Cache for normalized text (max 10 items, ~50MB limit per cache)
+@lru_cache(maxsize=10)
+def get_normalized_lecture_cache(text_hash: str, text: str) -> str:
+    return normalize_text(text)
 
 # --- Утилиты ---
 
@@ -26,12 +38,13 @@ def normalize_text(s):
         return ""
     return re.sub(r'\s+', ' ', s).strip().lower()
 
-def excerpt_around(text, idx, length=120):
+def excerpt_around(text, idx, length=500):
     if not text:
         return ""
     start = max(0, idx - length // 2)
     end = min(len(text), idx + length // 2)
-    return text[start:end].replace("\n", " ").replace("\r", " ")
+    excerpt = text[start:end].replace("\n", " ").replace("\r", " ")
+    return excerpt[:500]
 
 def find_definition_in_lecture(lecture, term):
     L = lecture
@@ -58,23 +71,27 @@ def score_option_by_lecture(lecture, option):
     opt = normalize_text(option)
 
     score = 0
-    snippets = []
+    best_snippet = None
+    best_score = 0
 
     # точное вхождение опции
     exact_matches = re.findall(re.escape(opt), L)
     exact_count = len(exact_matches)
     if exact_count > 0:
-        score += 3 * (1 + exact_count)**0.5  # Логарифмическое начисление
+        score += 3 * (1 + exact_count)**0.5
         first_match_idx = L.find(opt)
-        if first_match_idx != -1:
-            snippets.append({"why": "exact", "excerpt": excerpt_around(L, first_match_idx)})
+        if first_match_idx != -1 and best_score < 3:
+            best_snippet = excerpt_around(L, first_match_idx)
+            best_score = 3
 
     # фраза типа "opt представляет собой" или "opt - это"
     def_pattern = rf"{re.escape(opt)}\s+(представляет собой|является|это|характеризуется|обозначает|означает)"
     if re.search(def_pattern, lecture, re.IGNORECASE):
         score += 3
-        match = re.search(def_pattern, lecture, re.IGNORECASE)
-        snippets.append({"why": "definition", "excerpt": excerpt_around(lecture, match.start())})
+        if best_score < 3.5:
+            match = re.search(def_pattern, lecture, re.IGNORECASE)
+            best_snippet = excerpt_around(lecture, match.start())
+            best_score = 3.5
 
     # пересечение слов
     opt_words = set(opt.split())
@@ -82,14 +99,11 @@ def score_option_by_lecture(lecture, option):
         matched_words = len(opt_words.intersection(set(L.split())))
         ratio = matched_words / len(opt_words)
         score += ratio * 2
-        if ratio > 0:
-            snippets.append({"why": "words", "matched": f"{matched_words}/{len(opt_words)}"})
 
-    # небольшой бонус за длинную опцию, если она встречается
     if len(opt) > 30 and exact_count > 0:
         score += 0.5
 
-    return {"score": score, "snippets": snippets}
+    return {"score": score, "best_snippet": best_snippet}
 
 def detect_question_type(qtext):
     q = normalize_text(qtext)
@@ -113,6 +127,43 @@ def detect_question_type(qtext):
         return 'single'
 
     return 'single'
+
+async def save_to_supabase(table: str, data: dict):
+    try:
+        headers = {
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "Content-Type": "application/json",
+            "apikey": SUPABASE_KEY
+        }
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.post(
+                f"{SUPABASE_URL}/rest/v1/{table}",
+                json=data,
+                headers=headers
+            )
+            return response.status_code == 201
+    except Exception as e:
+        print(f"Error saving to Supabase: {e}")
+        return False
+
+async def get_from_supabase(table: str, session_id: str):
+    try:
+        headers = {
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "apikey": SUPABASE_KEY
+        }
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.get(
+                f"{SUPABASE_URL}/rest/v1/{table}?session_id=eq.{session_id}",
+                headers=headers
+            )
+            if response.status_code == 200:
+                data = response.json()
+                return data[0] if data else None
+            return None
+    except Exception as e:
+        print(f"Error getting from Supabase: {e}")
+        return None
 
 def parse_html_quiz(html):
     # --- Добавим обработку исключений ---
@@ -242,23 +293,28 @@ async def extract_text_from_pdf(file: UploadFile = File(...)):
 
     content = await file.read()
 
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="PDF больше 10 МБ")
+
     try:
         with pdfplumber.open(io.BytesIO(content)) as pdf:
             text = ""
             for page in pdf.pages:
                 page_text = page.extract_text()
-                if page_text: # Проверяем, что текст не None или пустой
+                if page_text:
                     text += page_text + " "
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка при извлечении текста: {str(e)}")
 
-    # Сохраняем текст в сессию (упрощённо, используя IP)
-    # В реальности используйте JWT токены или сессии
-    session_key = "default" # Упрощённо, можно использовать request.client.host
-    SESSION_STORAGE[session_key] = text
+    session_id = str(uuid.uuid4())
+
+    await save_to_supabase("quiz_sessions", {
+        "session_id": session_id,
+        "lecture_text": text
+    })
 
     return {
-        "text": text,
+        "session_id": session_id,
         "length": len(text),
         "snippet": text[:200]
     }
@@ -288,22 +344,28 @@ async def parse_quiz_html(data: ParseQuizHTML): # Принимаем JSON из �
     return {"ok": True, "questions": questions}
 
 
-# --- Обновлённый маршрут для обработки квиза (принимает уже распарсенные вопросы) ---
 class ProcessQuizData(BaseModel):
-    questions: List[dict] # Список вопросов в формате, как возвращается из /api/parse-quiz-html/
-    lecture_text: str
+    questions: List[dict]
+    session_id: str
 
 @app.post("/api/process-quiz/")
-async def process_quiz(data: ProcessQuizData): # <-- ИСПРАВЛЕНО: принимаем модель из тела
-    # --- Валидация данных вручную ---
+async def process_quiz(data: ProcessQuizData):
     questions = data.questions
-    lecture_text = data.lecture_text
+    session_id = data.session_id
 
-    if not lecture_text:
-        raise HTTPException(status_code=400, detail="Поле 'lecture_text' отсутствует или пусто. Сначала загрузите PDF-лекцию и убедитесь, что она успешно обработалась.")
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id отсутствует")
 
     if not questions:
-        raise HTTPException(status_code=400, detail="Поле 'questions' отсутствует или пусто. Сначала распарсите HTML теста.")
+        raise HTTPException(status_code=400, detail="questions отсутствует")
+
+    lecture_data = await get_from_supabase("quiz_sessions", session_id)
+    if not lecture_data:
+        raise HTTPException(status_code=404, detail="Сессия не найдена")
+
+    lecture_text = lecture_data.get("lecture_text", "")
+    if not lecture_text:
+        raise HTTPException(status_code=400, detail="Текст лекции пуст")
 
     results = []
 
@@ -311,73 +373,85 @@ async def process_quiz(data: ProcessQuizData): # <-- ИСПРАВЛЕНО: пр�
         qtext = q.get("question", "")
         opts = q.get("options", [])
         is_short = q.get("is_short", False)
-        # Определяем тип вопроса на основе текста
         qtype = detect_question_type(qtext)
 
         if is_short or qtype == 'short':
             lec = lecture_text
-            # Ищем определения
             def_regex = r"([А-Яа-яЁёA-Za-z0-9 \-]{2,80})\s*[—\-:]\s*это"
             match = re.search(def_regex, lec, re.IGNORECASE)
             found = None
             if match:
                 candidate = match.group(1).strip()
-                if len(candidate.split()) <= 6: # Ограничение на длину
-                    found = {"answer": candidate, "excerpt": excerpt_around(lec, match.start())}
+                if len(candidate.split()) <= 6:
+                    found = {
+                        "answer": candidate,
+                        "best_snippet": excerpt_around(lec, match.start())
+                    }
 
             if not found:
-                 # Попробуем "TERM это"
-                 alt_regex = r"([А-Яа-яЁёA-Za-z0-9 \-]{2,60})\s+это\s+"
-                 alt_match = re.search(alt_regex, lec, re.IGNORECASE)
-                 if alt_match:
-                     candidate = alt_match.group(1).strip()
-                     found = {"answer": candidate, "excerpt": excerpt_around(lec, alt_match.start())}
+                alt_regex = r"([А-Яа-яЁёA-Za-z0-9 \-]{2,60})\s+это\s+"
+                alt_match = re.search(alt_regex, lec, re.IGNORECASE)
+                if alt_match:
+                    candidate = alt_match.group(1).strip()
+                    found = {
+                        "answer": candidate,
+                        "best_snippet": excerpt_around(lec, alt_match.start())
+                    }
 
             results.append({
                 "question": qtext,
                 "type": "short",
                 "answer": found["answer"] if found else "",
-                "excerpt": found["excerpt"] if found else "",
+                "is_correct": found is not None,
+                "best_snippet": found["best_snippet"] if found else ""
             })
             continue
 
-        # Обработка вопросов с опциями
         scored = []
         for opt in opts:
             score_result = score_option_by_lecture(lecture_text, opt)
             scored.append({
                 "option": opt,
                 "score": score_result["score"],
-                "snippets": score_result["snippets"]
+                "best_snippet": score_result["best_snippet"]
             })
 
         max_score = max([s["score"] for s in scored], default=1)
         for s in scored:
             s["norm"] = round(s["score"] / max_score, 3) if max_score > 0 else 0
 
-        selected = []
+        correct_options = []
         if qtype == 'single':
             top = max(scored, key=lambda x: x["score"], default=None)
             if top:
-                selected = [{"option": top["option"], "score": top["norm"], "snippets": top["snippets"]}]
+                correct_options = [top["option"]]
         elif qtype == 'units':
-            selected = [s for s in scored if s["norm"] >= 0.15]
-            selected.sort(key=lambda x: x["norm"], reverse=True)
-        else: # multi
+            correct_options = [s["option"] for s in scored if s["norm"] >= 0.15]
+        else:
             candidates = [s for s in scored if s["norm"] >= 0.55]
-            if not candidates:
-                fallback = [s for s in scored if s["norm"] >= 0.25]
-                selected = fallback
+            if candidates:
+                correct_options = [s["option"] for s in candidates]
             else:
-                selected = candidates
-            selected.sort(key=lambda x: x["norm"], reverse=True)
+                correct_options = [s["option"] for s in scored if s["norm"] >= 0.25]
+
+        options_with_flags = []
+        for s in scored:
+            options_with_flags.append({
+                "option": s["option"],
+                "is_correct": s["option"] in correct_options,
+                "best_snippet": s["best_snippet"] or ""
+            })
 
         results.append({
             "question": qtext,
             "type": qtype,
-            "options": [{"option": s["option"], "norm": s["norm"], "snippets": s["snippets"]} for s in scored],
-            "selected": [{"option": s["option"], "score": s["score"], "snippets": s["snippets"]} for s in selected]
+            "options": options_with_flags
         })
+
+    await save_to_supabase("quiz_results", {
+        "session_id": session_id,
+        "results_json": json.dumps(results)
+    })
 
     return {"ok": True, "results": results}
 
