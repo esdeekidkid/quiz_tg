@@ -3,11 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <title>Quiz Helper</title>
+    <!-- Подключаем наш CSS файл -->
     <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
 </head>
 <body>
     <div class="container">
         <h1>Quiz Helper</h1>
+
         <div class="section">
             <h2>1. Загрузить PDF с лекцией</h2>
             <form id="upload-pdf-form">
@@ -42,10 +44,8 @@
     </div>
 
     <script>
-        // --- ВСТАВЬТЕ ВАШ ОБНОВЛЁННЫЙ JAVASCRIPT СЮДА ---
-        // --- Пример: ---
-        let lectureText = null;
-        let parsedQuestions = null;
+        let lectureText = null; // Хранит текст лекции после загрузки PDF
+        let parsedQuestions = null; // Хранит вопросы после парсинга
 
         document.getElementById('upload-pdf-form').addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -70,6 +70,7 @@
 
                 const data = await response.json();
                 if (!response.ok) {
+                    // --- Обновлено ---
                     let errorMsg = 'Неизвестная ошибка сервера при загрузке PDF';
                     if (data && typeof data === 'object' && data.detail) {
                         if (typeof data.detail === 'string') {
@@ -92,6 +93,7 @@
                 statusDiv.textContent = `PDF загружен. Длина: ${data.length} символов. Сниппет: "${data.snippet.substring(0, 100)}${data.snippet.length > 100 ? '...' : ''}"`;
 
             } catch (error) {
+                // --- Обновлено ---
                 statusDiv.className = 'error';
                 let errorMessage = error.message;
                 if (typeof error.message === 'object') {
@@ -128,6 +130,7 @@
 
                 const data = await response.json();
                 if (!response.ok) {
+                    // --- Обновлено ---
                     let errorMsg = 'Неизвестная ошибка сервера при разборе HTML';
                     if (data && typeof data === 'object' && data.detail) {
                         if (typeof data.detail === 'string') {
@@ -149,6 +152,7 @@
                 statusDiv.className = 'success';
                 statusDiv.textContent = `Найдено ${parsedQuestions.length} вопросов.`;
 
+                // Отобразить вопросы
                 parsedQuestionsDiv.innerHTML = '';
                 parsedQuestions.forEach((q, index) => {
                     const qDiv = document.createElement('div');
@@ -166,6 +170,7 @@
                 processParsedBtn.style.display = 'inline-block';
 
             } catch (error) {
+                // --- Обновлено ---
                 statusDiv.className = 'error';
                 let errorMessage = error.message;
                 if (typeof error.message === 'object') {
@@ -182,11 +187,12 @@
         }
 
         async function processParsedQuiz() {
-            const statusDiv = document.getElementById('status-quiz-parse');
+            const statusDiv = document.getElementById('status-quiz-parse'); // Используем тот же статус, можно создать отдельный
             statusDiv.className = '';
             statusDiv.textContent = 'Сопоставление...';
             const resultsDiv = document.getElementById('results');
 
+            // --- Добавлена проверка ---
             if (!lectureText) {
                 statusDiv.className = 'error';
                 statusDiv.textContent = 'Ошибка: сначала загрузите PDF.';
@@ -203,6 +209,7 @@
                 return;
             }
 
+            // --- Проверим типы данных ---
             if (typeof lectureText !== 'string') {
                 statusDiv.className = 'error';
                 statusDiv.textContent = 'Ошибка: текст лекции имеет неверный тип.';
@@ -217,13 +224,16 @@
                 return;
             }
 
+            // --- Подготовим объект для отправки ---
             const payload = {
                 questions: parsedQuestions,
                 lecture_text: lectureText
             };
 
+            // --- Логируем, что собираемся отправить ---
             console.log("processParsedQuiz: Sending payload to API:", payload);
 
+            // --- Проверим, что в payload есть нужные поля ---
             if (!payload.questions || !payload.lecture_text) {
                 statusDiv.className = 'error';
                 statusDiv.textContent = 'Ошибка: подготовленный объект для отправки некорректен.';
@@ -235,13 +245,15 @@
                 const response = await fetch('/api/process-quiz/', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
+                    body: JSON.stringify(payload) // <-- Отправляем подготовленный объект
                 });
 
+                // --- Логируем статус ответа ---
                 console.log("processParsedQuiz: Response status:", response.status);
 
                 const data = await response.json();
                 if (!response.ok) {
+                    // --- Обновлено ---
                     let errorMsg = 'Неизвестная ошибка сервера при обработке вопросов';
                     if (data && typeof data === 'object' && data.detail) {
                         if (typeof data.detail === 'string') {
@@ -261,9 +273,10 @@
 
                 statusDiv.className = 'success';
                 statusDiv.textContent = 'Вопросы сопоставлены успешно!';
-                resultsDiv.textContent = JSON.stringify(data.results, null, 2);
+                resultsDiv.textContent = JSON.stringify(data.results, null, 2); // Форматированный JSON
 
             } catch (error) {
+                // --- Обновлено ---
                 statusDiv.className = 'error';
                 let errorMessage = error.message;
                 if (typeof error.message === 'object') {
@@ -275,7 +288,7 @@
                 }
                 statusDiv.textContent = `Ошибка сопоставления: ${errorMessage}`;
                 resultsDiv.textContent = `Ошибка: ${errorMessage}`;
-                console.error("processParsedQuiz: Fetch error:", error);
+                console.error("processParsedQuiz: Fetch error:", error); // Логируем ошибку fetch
             }
         }
     </script>
