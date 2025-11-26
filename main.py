@@ -265,7 +265,7 @@ async def extract_text_from_pdf(file: UploadFile = File(...)):
 
 # --- Новый маршрут для парсинга HTML ---
 @app.post("/api/parse-quiz-html/")
-async def parse_quiz_html(data: dict): # Принимаем как JSON, чтобы не привязываться к полю 'html'
+async def parse_quiz_html( dict): # Принимаем как JSON, чтобы не привязываться к полю 'html'
     html = data.get("html", "")
     if not html:
         raise HTTPException(status_code=400, detail="Поле 'html' отсутствует или пусто.")
@@ -290,7 +290,7 @@ class ProcessQuizData(BaseModel):
     lecture_text: str
 
 @app.post("/api/process-quiz/")
-async def process_quiz( ProcessQuizData):
+async def process_quiz( ProcessQuizData): # <-- ИСПРАВЛЕНО: принимаем модель из тела
     # --- Валидация данных вручную ---
     questions = data.questions
     lecture_text = data.lecture_text
