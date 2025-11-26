@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Quiz Helper</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+        }
+        .section {
+            margin-bottom: 30px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .section h2 {
+            margin-top: 0;
+            color: #555;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input[type="file"], textarea {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        #status {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .warning { background-color: #fff3cd; color: #856404; border: 1px solid #ffeaa7; }
+        #results {
+            white-space: pre-wrap; /* Сохраняет форматирование */
+            background-color: #f9f9f9;
+            padding: 15px;
+            border: 1px solid #eee;
+            border-radius: 4px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Quiz Helper</h1>
+
+        <div class="section">
+            <h2>1. Загрузить PDF с лекцией</h2>
+            <form id="upload-pdf-form">
+                <label for="pdf-file">Выберите PDF файл:</label>
+                <input type="file" id="pdf-file" name="pdf" accept=".pdf" required>
+                <button type="submit">Загрузить PDF</button>
+            </form>
+            <div id="status-pdf"></div>
+        </div>
+
+        <div class="section">
+            <h2>2. Вставить HTML теста</h2>
+            <label for="quiz-html">HTML теста (или просто вопросы):</label>
+            <textarea id="quiz-html" rows="10" placeholder="Вставьте HTML код теста сюда..."></textarea>
+            <button id="process-btn" onclick="processQuiz()" disabled>Обработать тест</button>
+            <div id="status-quiz"></div>
+        </div>
+
+        <div class="section">
+            <h2>3. Результаты</h2>
+            <div id="results">Здесь появятся результаты после обработки теста.</div>
+        </div>
+    </div>
+
+    <script>
+        let lectureText = null; // Хранит текст лекции после загрузки PDF
+
+        document.getElementById('upload-pdf-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const statusDiv = document.getElementById('status-pdf');
+            statusDiv.className = '';
+            statusDiv.textContent = 'Загрузка...';
+
+            const formData = new FormData();
+            const fileInput = document.getElementById('pdf-file');
+            if (!fileInput.files[0]) {
+                statusDiv.className = 'error';
+                statusDiv.textContent = 'Ошибка: файл не выбран.';
+                return;
+            }
+            formData.append('file', fileInput.files[0]);
+
+            try {
+                const response = await fetch('/api/extract-text-from-pdf/', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.detail || 'Ошибка сервера');
+                }
+
+                lectureText = data.text;
+                statusDiv.className = 'success';
+                statusDiv.textContent = `PDF загружен. Длина: ${data.length} символов. Сниппет: "${data.snippet.substring(0, 100)}${data.snippet.length > 100 ? '...' : ''}"`;
+
+                // Активировать кнопку обработки
+                document.getElementById('process-btn').disabled = false;
+
+            } catch (error) {
+                statusDiv.className = 'error';
+                statusDiv.textContent = `Ошибка загрузки: ${error.message}`;
+            }
+        });
+
+        async function processQuiz() {
+            const statusDiv = document.getElementById('status-quiz');
+            statusDiv.className = '';
+            statusDiv.textContent = 'Обработка...';
+            const resultsDiv = document.getElementById('results');
+
+            if (!lectureText) {
+                statusDiv.className = 'error';
+                statusDiv.textContent = 'Ошибка: сначала загрузите PDF.';
+                resultsDiv.textContent = 'Сначала загрузите PDF.';
+                return;
+            }
+
+            const html = document.getElementById('quiz-html').value.trim();
+            if (!html) {
+                statusDiv.className = 'error';
+                statusDiv.textContent = 'Ошибка: введите HTML теста.';
+                resultsDiv.textContent = 'Введите HTML теста.';
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/process-quiz/', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ html: html, lecture_text: lectureText })
+                });
+
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.detail || 'Ошибка сервера');
+                }
+
+                statusDiv.className = 'success';
+                statusDiv.textContent = 'Тест обработан успешно!';
+                resultsDiv.textContent = JSON.stringify(data.results, null, 2); // Форматированный JSON
+
+            } catch (error) {
+                statusDiv.className = 'error';
+                statusDiv.textContent = `Ошибка обработки: ${error.message}`;
+                resultsDiv.textContent = `Ошибка: ${error.message}`;
+            }
+        }
+    </script>
+</body>
+</html>
