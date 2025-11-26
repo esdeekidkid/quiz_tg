@@ -1,9 +1,10 @@
-import io # <-- Добавлен импорт io
+import io
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from typing import Optional
 import pdfplumber
 from bs4 import BeautifulSoup
 import re
@@ -117,64 +118,105 @@ def parse_html_quiz(html):
     soup = BeautifulSoup(html, 'html.parser')
     questions = []
 
-    # Попробуем найти вопросы по классам, как в предыдущем коде
-    que_elements = soup.find_all(class_='que') or soup.find_all('fieldset', class_='ablock')
+    # Найдём *все* элементы с классом 'que' - это основной контейнер вопроса в Moodle
+    que_elements = soup.find_all(class_='que')
 
     for el in que_elements:
         q = {}
-        # Вопрос
-        qtext_el = el.find(class_='qtext') or el.find('h4') or el
-        q['question'] = qtext_el.get_text(strip=True).replace('\n', ' ')
-        if not q['question']:
-            q['question'] = f"Вопрос {len(questions) + 1}"
+        # Вопрос: находим текст вопроса внутри .qtext
+        qtext_el = el.find(class_='qtext')
+        if qtext_el:
+            # Убираем label и input из текста вопроса, если они есть
+            for tag in qtext_el.find_all(['label', 'input']):
+                tag.decompose()
+            q['question'] = qtext_el.get_text(strip=True).replace('\n', ' ')
+        else:
+            q['question'] = f"Вопрос {len(questions) + 1}" # Запасной вариант
 
-        # Опции
+        # Опции: находим внутри .answer или внутри .ablock
         opts = []
-        # Попробуем найти опции в .answer
+        # Сначала пробуем .answer
         answer_divs = el.find_all(class_='answer')
         for div in answer_divs:
-            p_tags = div.find_all('p')
-            for p in p_tags:
-                opt_text = p.get_text(strip=True).replace('\n', ' ')
+            # Ищем label с data-region="answer-label" - это современный способ в Moodle
+            labels = div.find_all(attrs={'data-region': 'answer-label'})
+            for label in labels:
+                opt_text = label.get_text(strip=True).replace('\n', ' ')
                 if opt_text:
                     opts.append(opt_text)
-        # Или в label для input
-        input_labels = el.find_all('label')
-        for label in input_labels:
-            opt_text = label.get_text(strip=True).replace('\n', ' ')
-            if opt_text and opt_text not in opts:
-                opts.append(opt_text)
+            # Ищем старые label
+            for label in div.find_all('label'):
+                # Проверяем, не является ли он частью .qtext или другого системного блока
+                if not label.find_parent(class_='qtext'):
+                    opt_text = label.get_text(strip=True).replace('\n', ' ')
+                    if opt_text and opt_text not in opts:
+                        opts.append(opt_text)
+
+        # Если не нашли в .answer, пробуем внутри .ablock
+        if not opts:
+             ablock = el.find('fieldset', class_='ablock')
+             if ablock:
+                 labels = ablock.find_all(attrs={'data-region': 'answer-label'})
+                 for label in labels:
+                     opt_text = label.get_text(strip=True).replace('\n', ' ')
+                     if opt_text:
+                         opts.append(opt_text)
+                 for label in ablock.find_all('label'):
+                     if not label.find_parent(class_='qtext'):
+                         opt_text = label.get_text(strip=True).replace('\n', ' ')
+                         if opt_text and opt_text not in opts:
+                             opts.append(opt_text)
 
         q['options'] = list(set(opts)) # dedupe
+
         # Проверим, является ли коротким ответом
-        q['is_short'] = bool(el.find('input', type='text')) or 'shortanswer' in el.get('class', [])
+        # Проверим input type=text, textarea, или input с именем, содержащим _answer
+        is_short = False
+        qtext_part = el.find(class_='qtext')
+        if qtext_part:
+             # Проверяем input/textarea внутри .qtext
+             if qtext_part.find(['input', 'textarea'], attrs={'type': 'text'}):
+                 is_short = True
+             # Проверяем input с именем, содержащим _answer
+             if qtext_part.find(['input', 'textarea'], attrs={'name': lambda x: x and '_answer' in x}):
+                 is_short = True
+
+        # Проверяем в остальной части элемента вопроса
+        if not is_short:
+            if el.find(['input', 'textarea'], attrs={'type': 'text'}):
+                 is_short = True
+            if el.find(['input', 'textarea'], attrs={'name': lambda x: x and '_answer' in x}):
+                 is_short = True
+
+        q['is_short'] = is_short
         questions.append(q)
 
-    # Если не нашли, ищем вручную
+    # Если не нашли по классам, ищем вручную по эвристике (менее надёжно)
     if not questions:
-        # Простая эвристика: все <p> до <input> как один вопрос
-        all_ps = soup.find_all('p')
-        all_inputs = soup.find_all('input', type='radio') + soup.find_all('input', type='checkbox')
-        # Это сложнее, но для простоты:
-        for p in all_ps:
-            if p.find('input'): # Если внутри p есть input - это опция
-                 continue
-            question_text = p.get_text(strip=True).replace('\n', ' ')
+        # Ищем все <p> внутри .content или .formulation, предполагая, что это вопросы
+        # Это менее надёжно
+        content_blocks = soup.find_all(class_='content') or soup.find_all(class_='formulation')
+        for block in content_blocks:
+            question_text = block.find(class_='qtext')
             if question_text:
-                 # Попробуем найти опции рядом
-                 options = []
-                 for inp in all_inputs:
-                     label = soup.find('label', attrs={'for': inp.get('id')})
-                     if label:
-                         opt_text = label.get_text(strip=True).replace('\n', ' ')
-                         if opt_text:
-                             options.append(opt_text)
-                 questions.append({
-                     "question": question_text,
-                     "options": list(set(options)),
-                     "is_short": bool(soup.find('input', type='text'))
-                 })
-                 break # Только первый найденный вопрос так
+                qtext = question_text.get_text(strip=True).replace('\n', ' ')
+                if qtext:
+                    opts = []
+                    # Ищем опции
+                    answer_divs = block.find_all(class_='answer')
+                    for div in answer_divs:
+                        labels = div.find_all('label')
+                        for label in labels:
+                            opt_text = label.get_text(strip=True).replace('\n', ' ')
+                            if opt_text:
+                                opts.append(opt_text)
+                    # Заполняем q
+                    q = {
+                        "question": qtext,
+                        "options": list(set(opts)),
+                        "is_short": bool(block.find(['input', 'textarea'], attrs={'type': 'text'}))
+                    }
+                    questions.append(q)
 
     return questions
 
@@ -190,11 +232,10 @@ async def extract_text_from_pdf(file: UploadFile = File(...)):
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Файл должен быть PDF")
 
-    content = await file.read() # Читаем байты
+    content = await file.read()
 
-    # --- Вот тут изменение ---
     try:
-        with pdfplumber.open(io.BytesIO(content)) as pdf: # <-- Обернули в io.BytesIO
+        with pdfplumber.open(io.BytesIO(content)) as pdf:
             text = ""
             for page in pdf.pages:
                 page_text = page.extract_text()
@@ -215,21 +256,26 @@ async def extract_text_from_pdf(file: UploadFile = File(...)):
     }
 
 class QuizData(BaseModel):
-    html: str
-    lecture_text: str
+    html: Optional[str] = Field(None, description="HTML теста")
+    lecture_text: Optional[str] = Field(None, description="Текст лекции из PDF")
 
 @app.post("/api/process-quiz/")
 async def process_quiz( QuizData):
+    # --- Валидация данных вручную ---
     html = data.html
     lecture_text = data.lecture_text
 
     if not lecture_text:
-        raise HTTPException(status_code=400, detail="Сначала загрузите PDF-лекцию.")
+        raise HTTPException(status_code=400, detail="Поле 'lecture_text' отсутствует или пусто. Сначала загрузите PDF-лекцию и убедитесь, что она успешно обработалась.")
 
     if not html:
-        raise HTTPException(status_code=400, detail="Нет HTML в теле запроса")
+        raise HTTPException(status_code=400, detail="Поле 'html' отсутствует или пусто. Введите HTML теста.")
 
+    # --- Остальная логика ---
     questions = parse_html_quiz(html)
+    if not questions:
+        raise HTTPException(status_code=400, detail="В HTML не найдено ни одного вопроса. Убедитесь, что HTML содержит правильную структуру теста.")
+
     results = []
 
     for q in questions:
