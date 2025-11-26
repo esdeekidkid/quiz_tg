@@ -1,48 +1,3 @@
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <title>Quiz Helper</title>
-    <!-- Подключаем наш CSS файл -->
-    <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
-</head>
-<body>
-    <div class="container">
-        <h1>Quiz Helper</h1>
-
-        <div class="section">
-            <h2>1. Загрузить PDF с лекцией</h2>
-            <form id="upload-pdf-form">
-                <label for="pdf-file">Выберите PDF файл:</label>
-                <input type="file" id="pdf-file" name="pdf" accept=".pdf" required>
-                <button type="submit">Загрузить PDF</button>
-            </form>
-            <div id="status-pdf"></div>
-        </div>
-
-        <div class="section">
-            <h2>2. Вставить HTML теста</h2>
-            <label for="quiz-html">HTML теста (весь код страницы):</label>
-            <textarea id="quiz-html" rows="10" placeholder="Вставьте HTML код теста сюда..."></textarea>
-            <button id="parse-btn" onclick="parseQuiz()">Разобрать HTML</button>
-            <div id="status-quiz-parse"></div>
-        </div>
-
-        <div class="section">
-            <h2>3. Результаты парсинга (вопросы)</h2>
-            <div id="parsed-questions-container">
-                <p>Здесь появятся вопросы после разбора HTML.</p>
-                <div id="parsed-questions" style="display: none;"></div>
-                <button id="process-parsed-btn" onclick="processParsedQuiz()" style="display: none;">Сопоставить с лекцией</button>
-            </div>
-        </div>
-
-        <div class="section">
-            <h2>4. Результаты сопоставления</h2>
-            <div id="results">Здесь появятся результаты после сопоставления с лекцией.</div>
-        </div>
-    </div>
-
     <script>
         let lectureText = null; // Хранит текст лекции после загрузки PDF
         let parsedQuestions = null; // Хранит вопросы после парсинга
@@ -187,15 +142,17 @@
         }
 
         async function processParsedQuiz() {
-            const statusDiv = document.getElementById('status-quiz-parse'); // Используем тот же статус, можно создать отдельный
+            const statusDiv = document.getElementById('status-quiz-parse');
             statusDiv.className = '';
             statusDiv.textContent = 'Сопоставление...';
             const resultsDiv = document.getElementById('results');
 
+            // --- Проверки ---
             if (!lectureText) {
                 statusDiv.className = 'error';
                 statusDiv.textContent = 'Ошибка: сначала загрузите PDF.';
                 resultsDiv.textContent = 'Сначала загрузите PDF.';
+                console.error("processParsedQuiz: lectureText is null or undefined");
                 return;
             }
 
@@ -203,6 +160,39 @@
                 statusDiv.className = 'error';
                 statusDiv.textContent = 'Ошибка: сначала разберите HTML.';
                 resultsDiv.textContent = 'Сначала разберите HTML.';
+                console.error("processParsedQuiz: parsedQuestions is null, undefined, or empty");
+                return;
+            }
+
+            // --- Проверим типы данных ---
+            if (typeof lectureText !== 'string') {
+                statusDiv.className = 'error';
+                statusDiv.textContent = 'Ошибка: текст лекции имеет неверный тип.';
+                console.error("processParsedQuiz: lectureText is not a string:", typeof lectureText);
+                return;
+            }
+
+            if (!Array.isArray(parsedQuestions)) {
+                statusDiv.className = 'error';
+                statusDiv.textContent = 'Ошибка: вопросы имеют неверный тип.';
+                console.error("processParsedQuiz: parsedQuestions is not an array:", typeof parsedQuestions);
+                return;
+            }
+
+            // --- Подготовим объект для отправки ---
+            const payload = {
+                questions: parsedQuestions,
+                lecture_text: lectureText
+            };
+
+            // --- Логируем, что собираемся отправить ---
+            console.log("processParsedQuiz: Sending payload to API:", payload);
+
+            // --- Проверим, что в payload есть нужные поля ---
+            if (!payload.questions || !payload.lecture_text) {
+                statusDiv.className = 'error';
+                statusDiv.textContent = 'Ошибка: подготовленный объект для отправки некорректен.';
+                console.error("processParsedQuiz: payload is missing questions or lecture_text", payload);
                 return;
             }
 
@@ -210,8 +200,11 @@
                 const response = await fetch('/api/process-quiz/', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ questions: parsedQuestions, lecture_text: lectureText })
+                    body: JSON.stringify(payload) // <-- Отправляем подготовленный объект
                 });
+
+                // --- Логируем статус ответа ---
+                console.log("processParsedQuiz: Response status:", response.status);
 
                 const data = await response.json();
                 if (!response.ok) {
@@ -250,8 +243,7 @@
                 }
                 statusDiv.textContent = `Ошибка сопоставления: ${errorMessage}`;
                 resultsDiv.textContent = `Ошибка: ${errorMessage}`;
+                console.error("processParsedQuiz: Fetch error:", error); // Логируем ошибку fetch
             }
         }
     </script>
-</body>
-</html>
