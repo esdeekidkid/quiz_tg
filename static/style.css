@@ -1,0 +1,147 @@
+/* static/style.css */
+
+:root {
+  --primary-color: #4CAF50;
+  --primary-hover-color: #45a049;
+  --background-color: #f5f5f5;
+  --container-bg: white;
+  --border-color: #ddd;
+  --text-color: #333;
+  --heading-color: #555;
+  --success-bg: #d4edda;
+  --success-text: #155724;
+  --error-bg: #f8d7da;
+  --error-text: #721c24;
+  --warning-bg: #fff3cd;
+  --warning-text: #856404;
+  --results-bg: #f9f9f9;
+  --disabled-bg: #cccccc;
+  --disabled-cursor: not-allowed;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  margin: 0;
+  padding: 20px;
+  background-color: var(--background-color);
+  color: var(--text-color);
+}
+
+.container {
+  max-width: 900px;
+  margin: 0 auto;
+  background-color: var(--container-bg);
+  padding: 30px;
+  border-radius: 10px;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+h1 {
+  color: var(--text-color);
+  text-align: center;
+  margin-bottom: 30px;
+  font-weight: 600;
+}
+
+.section {
+  margin-bottom: 30px;
+  padding: 20px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background-color: #fafafa; /* Лёгкий оттенок фона */
+}
+
+.section h2 {
+  margin-top: 0;
+  color: var(--heading-color);
+  font-size: 1.4em;
+  border-bottom: 2px solid var(--primary-color);
+  padding-bottom: 5px;
+}
+
+label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 500;
+  color: #444;
+}
+
+input[type="file"], textarea {
+  width: 100%;
+  padding: 12px;
+  margin-bottom: 15px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 14px;
+  transition: border-color 0.3s;
+}
+
+input[type="file"]:focus, textarea:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.2);
+}
+
+button {
+  background-color: var(--primary-color);
+  color: white;
+  padding: 12px 24px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 500;
+  transition: background-color 0.3s;
+  display: inline-block;
+}
+
+button:hover:not(:disabled) {
+  background-color: var(--primary-hover-color);
+}
+
+button:disabled {
+  background-color: var(--disabled-bg);
+  cursor: var(--disabled-cursor);
+}
+
+#status, #status-pdf, #status-quiz {
+  margin-top: 15px;
+  padding: 12px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.success {
+  background-color: var(--success-bg);
+  color: var(--success-text);
+  border: 1px solid #c3e6cb;
+}
+
+.error {
+  background-color: var(--error-bg);
+  color: var(--error-text);
+  border: 1px solid #f5c6cb;
+}
+
+.warning {
+  background-color: var(--warning-bg);
+  color: var(--warning-text);
+  border: 1px solid #ffeaa7;
+}
+
+#results {
+  white-space: pre-wrap;
+  background-color: var(--results-bg);
+  padding: 20px;
+  border: 1px solid #eee;
+  border-radius: 4px;
+  max-height: 500px;
+  overflow-y: auto;
+  font-family: monospace; /* Для лучшего отображения JSON */
+  font-size: 14px;
+  line-height: 1.5;
+}
