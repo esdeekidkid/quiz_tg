@@ -4,7 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, List
 import pdfplumber
 from bs4 import BeautifulSoup
 import re
@@ -115,7 +115,15 @@ def detect_question_type(qtext):
     return 'single'
 
 def parse_html_quiz(html):
-    soup = BeautifulSoup(html, 'html.parser')
+    # --- Добавим обработку исключений ---
+    try:
+        # Проверим, не является ли html уже декодированным юникодом, но с тегами в виде \uXXXX
+        # Это редкий случай, но возможный. BeautifulSoup обычно справляется сам.
+        soup = BeautifulSoup(html, 'html.parser')
+    except Exception as e:
+        print(f"Error parsing HTML with BeautifulSoup: {e}") # Логирование ошибки
+        return [] # Возвращаем пустой список, если не смогли распарсить
+
     questions = []
 
     # Найдём *все* элементы с классом 'que' - это основной контейнер вопроса в Moodle
@@ -255,34 +263,52 @@ async def extract_text_from_pdf(file: UploadFile = File(...)):
         "snippet": text[:200]
     }
 
-class QuizData(BaseModel):
-    html: Optional[str] = Field(None, description="HTML теста")
-    lecture_text: Optional[str] = Field(None, description="Текст лекции из PDF")
+# --- Новый маршрут для парсинга HTML ---
+@app.post("/api/parse-quiz-html/")
+async def parse_quiz_html(data: dict): # Принимаем как JSON, чтобы не привязываться к полю 'html'
+    html = data.get("html", "")
+    if not html:
+        raise HTTPException(status_code=400, detail="Поле 'html' отсутствует или пусто.")
+
+    # --- Попробуем распарсить HTML ---
+    try:
+        questions = parse_html_quiz(html)
+    except Exception as e:
+        # Если parse_html_quiz выбросит исключение (хотя мы его и обернули внутри), ловим здесь
+        print(f"Error in parse_html_quiz: {e}") # Логирование ошибки
+        raise HTTPException(status_code=500, detail=f"Ошибка при парсинге HTML теста: {str(e)}")
+
+    if not questions:
+        raise HTTPException(status_code=400, detail="В HTML не найдено ни одного вопроса. Убедитесь, что HTML содержит правильную структуру теста (например, div с классом 'que').")
+
+    return {"ok": True, "questions": questions}
+
+
+# --- Обновлённый маршрут для обработки квиза (принимает уже распарсенные вопросы) ---
+class ProcessQuizData(BaseModel):
+    questions: List[dict] # Список вопросов в формате, как возвращается из /api/parse-quiz-html/
+    lecture_text: str
 
 @app.post("/api/process-quiz/")
-async def process_quiz( QuizData):
+async def process_quiz( ProcessQuizData):
     # --- Валидация данных вручную ---
-    html = data.html
+    questions = data.questions
     lecture_text = data.lecture_text
 
     if not lecture_text:
         raise HTTPException(status_code=400, detail="Поле 'lecture_text' отсутствует или пусто. Сначала загрузите PDF-лекцию и убедитесь, что она успешно обработалась.")
 
-    if not html:
-        raise HTTPException(status_code=400, detail="Поле 'html' отсутствует или пусто. Введите HTML теста.")
-
-    # --- Остальная логика ---
-    questions = parse_html_quiz(html)
     if not questions:
-        raise HTTPException(status_code=400, detail="В HTML не найдено ни одного вопроса. Убедитесь, что HTML содержит правильную структуру теста.")
+        raise HTTPException(status_code=400, detail="Поле 'questions' отсутствует или пусто. Сначала распарсите HTML теста.")
 
     results = []
 
     for q in questions:
         qtext = q.get("question", "")
-        qtype = detect_question_type(qtext)
         opts = q.get("options", [])
         is_short = q.get("is_short", False)
+        # Определяем тип вопроса на основе текста
+        qtype = detect_question_type(qtext)
 
         if is_short or qtype == 'short':
             lec = lecture_text
