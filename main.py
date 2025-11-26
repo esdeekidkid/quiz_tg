@@ -12,7 +12,7 @@ app = FastAPI(title="Quiz Helper API")
 
 # Подключаем папки templates и static
 templates = Jinja2Templates(directory="templates")
-# app.mount("/static", StaticFiles(directory="static"), name="static") # Если будете использовать CSS/JS
+app.mount("/static", StaticFiles(directory="static"), name="static") # <-- Добавлено
 
 # --- Глобальное хранилище для сессии (в реальном проекте используйте Redis или БД)
 SESSION_STORAGE = {}
