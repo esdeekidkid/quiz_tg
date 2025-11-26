@@ -1,3 +1,4 @@
+import io # <-- Добавлен импорт io
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -12,7 +13,7 @@ app = FastAPI(title="Quiz Helper API")
 
 # Подключаем папки templates и static
 templates = Jinja2Templates(directory="templates")
-app.mount("/static", StaticFiles(directory="static"), name="static") # <-- Добавлено
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # --- Глобальное хранилище для сессии (в реальном проекте используйте Redis или БД)
 SESSION_STORAGE = {}
@@ -189,10 +190,12 @@ async def extract_text_from_pdf(file: UploadFile = File(...)):
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Файл должен быть PDF")
 
-    content = await file.read()
-    text = ""
+    content = await file.read() # Читаем байты
+
+    # --- Вот тут изменение ---
     try:
-        with pdfplumber.open(content) as pdf:
+        with pdfplumber.open(io.BytesIO(content)) as pdf: # <-- Обернули в io.BytesIO
+            text = ""
             for page in pdf.pages:
                 page_text = page.extract_text()
                 if page_text: # Проверяем, что текст не None или пустой
