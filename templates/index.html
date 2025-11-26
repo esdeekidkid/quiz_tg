@@ -60,7 +60,14 @@
 
                 const data = await response.json();
                 if (!response.ok) {
-                    throw new Error(data.detail || 'Ошибка сервера');
+                    // --- Исправлено ---
+                    let errorMsg = 'Неизвестная ошибка сервера';
+                    if (data && typeof data === 'object' && data.detail) {
+                        errorMsg = data.detail;
+                    } else if (response.statusText) {
+                        errorMsg = response.statusText;
+                    }
+                    throw new Error(errorMsg);
                 }
 
                 lectureText = data.text;
@@ -71,8 +78,18 @@
                 document.getElementById('process-btn').disabled = false;
 
             } catch (error) {
+                // --- Исправлено ---
                 statusDiv.className = 'error';
-                statusDiv.textContent = `Ошибка загрузки: ${error.message}`;
+                // Проверяем, является ли error.message объектом
+                let errorMessage = error.message;
+                if (typeof error.message === 'object') {
+                    try {
+                        errorMessage = JSON.stringify(error.message);
+                    } catch (e) {
+                        errorMessage = String(error.message);
+                    }
+                }
+                statusDiv.textContent = `Ошибка загрузки: ${errorMessage}`;
             }
         });
 
@@ -106,7 +123,14 @@
 
                 const data = await response.json();
                 if (!response.ok) {
-                    throw new Error(data.detail || 'Ошибка сервера');
+                    // --- Исправлено ---
+                    let errorMsg = 'Неизвестная ошибка сервера';
+                    if (data && typeof data === 'object' && data.detail) {
+                        errorMsg = data.detail;
+                    } else if (response.statusText) {
+                        errorMsg = response.statusText;
+                    }
+                    throw new Error(errorMsg);
                 }
 
                 statusDiv.className = 'success';
@@ -114,9 +138,19 @@
                 resultsDiv.textContent = JSON.stringify(data.results, null, 2); // Форматированный JSON
 
             } catch (error) {
+                // --- Исправлено ---
                 statusDiv.className = 'error';
-                statusDiv.textContent = `Ошибка обработки: ${error.message}`;
-                resultsDiv.textContent = `Ошибка: ${error.message}`;
+                // Проверяем, является ли error.message объектом
+                let errorMessage = error.message;
+                if (typeof error.message === 'object') {
+                    try {
+                        errorMessage = JSON.stringify(error.message);
+                    } catch (e) {
+                        errorMessage = String(error.message);
+                    }
+                }
+                statusDiv.textContent = `Ошибка обработки: ${errorMessage}`;
+                resultsDiv.textContent = `Ошибка: ${errorMessage}`;
             }
         }
     </script>
