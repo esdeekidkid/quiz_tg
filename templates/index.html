@@ -22,20 +22,30 @@
 
         <div class="section">
             <h2>2. Вставить HTML теста</h2>
-            <label for="quiz-html">HTML теста (или просто вопросы):</label>
+            <label for="quiz-html">HTML теста (весь код страницы):</label>
             <textarea id="quiz-html" rows="10" placeholder="Вставьте HTML код теста сюда..."></textarea>
-            <button id="process-btn" onclick="processQuiz()" disabled>Обработать тест</button>
-            <div id="status-quiz"></div>
+            <button id="parse-btn" onclick="parseQuiz()">Разобрать HTML</button>
+            <div id="status-quiz-parse"></div>
         </div>
 
         <div class="section">
-            <h2>3. Результаты</h2>
-            <div id="results">Здесь появятся результаты после обработки теста.</div>
+            <h2>3. Результаты парсинга (вопросы)</h2>
+            <div id="parsed-questions-container">
+                <p>Здесь появятся вопросы после разбора HTML.</p>
+                <div id="parsed-questions" style="display: none;"></div>
+                <button id="process-parsed-btn" onclick="processParsedQuiz()" style="display: none;">Сопоставить с лекцией</button>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>4. Результаты сопоставления</h2>
+            <div id="results">Здесь появятся результаты после сопоставления с лекцией.</div>
         </div>
     </div>
 
     <script>
         let lectureText = null; // Хранит текст лекции после загрузки PDF
+        let parsedQuestions = null; // Хранит вопросы после парсинга
 
         document.getElementById('upload-pdf-form').addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -60,10 +70,18 @@
 
                 const data = await response.json();
                 if (!response.ok) {
-                    // --- Исправлено ---
-                    let errorMsg = 'Неизвестная ошибка сервера';
+                    // --- Обновлено ---
+                    let errorMsg = 'Неизвестная ошибка сервера при загрузке PDF';
                     if (data && typeof data === 'object' && data.detail) {
-                        errorMsg = data.detail;
+                        if (typeof data.detail === 'string') {
+                            errorMsg = data.detail;
+                        } else {
+                            try {
+                                errorMsg = JSON.stringify(data.detail);
+                            } catch (e) {
+                                errorMsg = String(data.detail);
+                            }
+                        }
                     } else if (response.statusText) {
                         errorMsg = response.statusText;
                     }
@@ -74,13 +92,9 @@
                 statusDiv.className = 'success';
                 statusDiv.textContent = `PDF загружен. Длина: ${data.length} символов. Сниппет: "${data.snippet.substring(0, 100)}${data.snippet.length > 100 ? '...' : ''}"`;
 
-                // Активировать кнопку обработки
-                document.getElementById('process-btn').disabled = false;
-
             } catch (error) {
-                // --- Исправлено ---
+                // --- Обновлено ---
                 statusDiv.className = 'error';
-                // Проверяем, является ли error.message объектом
                 let errorMessage = error.message;
                 if (typeof error.message === 'object') {
                     try {
@@ -93,10 +107,89 @@
             }
         });
 
-        async function processQuiz() {
-            const statusDiv = document.getElementById('status-quiz');
+        async function parseQuiz() {
+            const statusDiv = document.getElementById('status-quiz-parse');
             statusDiv.className = '';
-            statusDiv.textContent = 'Обработка...';
+            statusDiv.textContent = 'Разбор...';
+            const parsedQuestionsDiv = document.getElementById('parsed-questions');
+            const processParsedBtn = document.getElementById('process-parsed-btn');
+
+            const html = document.getElementById('quiz-html').value.trim();
+            if (!html) {
+                statusDiv.className = 'error';
+                statusDiv.textContent = 'Ошибка: введите HTML теста.';
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/parse-quiz-html/', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ html: html })
+                });
+
+                const data = await response.json();
+                if (!response.ok) {
+                    // --- Обновлено ---
+                    let errorMsg = 'Неизвестная ошибка сервера при разборе HTML';
+                    if (data && typeof data === 'object' && data.detail) {
+                        if (typeof data.detail === 'string') {
+                            errorMsg = data.detail;
+                        } else {
+                            try {
+                                errorMsg = JSON.stringify(data.detail);
+                            } catch (e) {
+                                errorMsg = String(data.detail);
+                            }
+                        }
+                    } else if (response.statusText) {
+                        errorMsg = response.statusText;
+                    }
+                    throw new Error(errorMsg);
+                }
+
+                parsedQuestions = data.questions;
+                statusDiv.className = 'success';
+                statusDiv.textContent = `Найдено ${parsedQuestions.length} вопросов.`;
+
+                // Отобразить вопросы
+                parsedQuestionsDiv.innerHTML = '';
+                parsedQuestions.forEach((q, index) => {
+                    const qDiv = document.createElement('div');
+                    qDiv.className = 'parsed-question';
+                    qDiv.innerHTML = `
+                        <h4>Вопрос ${index + 1}:</h4>
+                        <p><strong>Текст:</strong> ${q.question}</p>
+                        <p><strong>Тип:</strong> ${q.is_short ? 'Короткий ответ' : 'Множественный выбор'}</p>
+                        <p><strong>Опции:</strong> ${q.options.join(', ')}</p>
+                        <hr>
+                    `;
+                    parsedQuestionsDiv.appendChild(qDiv);
+                });
+                parsedQuestionsDiv.style.display = 'block';
+                processParsedBtn.style.display = 'inline-block';
+
+            } catch (error) {
+                // --- Обновлено ---
+                statusDiv.className = 'error';
+                let errorMessage = error.message;
+                if (typeof error.message === 'object') {
+                    try {
+                        errorMessage = JSON.stringify(error.message);
+                    } catch (e) {
+                        errorMessage = String(error.message);
+                    }
+                }
+                statusDiv.textContent = `Ошибка разбора: ${errorMessage}`;
+                parsedQuestionsDiv.style.display = 'none';
+                processParsedBtn.style.display = 'none';
+            }
+        }
+
+        async function processParsedQuiz() {
+            const statusDiv = document.getElementById('status-quiz-parse'); // Используем тот же статус, можно создать отдельный
+            statusDiv.className = '';
+            statusDiv.textContent = 'Сопоставление...';
             const resultsDiv = document.getElementById('results');
 
             if (!lectureText) {
@@ -106,11 +199,10 @@
                 return;
             }
 
-            const html = document.getElementById('quiz-html').value.trim();
-            if (!html) {
+            if (!parsedQuestions || parsedQuestions.length === 0) {
                 statusDiv.className = 'error';
-                statusDiv.textContent = 'Ошибка: введите HTML теста.';
-                resultsDiv.textContent = 'Введите HTML теста.';
+                statusDiv.textContent = 'Ошибка: сначала разберите HTML.';
+                resultsDiv.textContent = 'Сначала разберите HTML.';
                 return;
             }
 
@@ -118,15 +210,23 @@
                 const response = await fetch('/api/process-quiz/', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ html: html, lecture_text: lectureText })
+                    body: JSON.stringify({ questions: parsedQuestions, lecture_text: lectureText })
                 });
 
                 const data = await response.json();
                 if (!response.ok) {
-                    // --- Исправлено ---
-                    let errorMsg = 'Неизвестная ошибка сервера';
+                    // --- Обновлено ---
+                    let errorMsg = 'Неизвестная ошибка сервера при обработке вопросов';
                     if (data && typeof data === 'object' && data.detail) {
-                        errorMsg = data.detail;
+                        if (typeof data.detail === 'string') {
+                            errorMsg = data.detail;
+                        } else {
+                            try {
+                                errorMsg = JSON.stringify(data.detail);
+                            } catch (e) {
+                                errorMsg = String(data.detail);
+                            }
+                        }
                     } else if (response.statusText) {
                         errorMsg = response.statusText;
                     }
@@ -134,13 +234,12 @@
                 }
 
                 statusDiv.className = 'success';
-                statusDiv.textContent = 'Тест обработан успешно!';
+                statusDiv.textContent = 'Вопросы сопоставлены успешно!';
                 resultsDiv.textContent = JSON.stringify(data.results, null, 2); // Форматированный JSON
 
             } catch (error) {
-                // --- Исправлено ---
+                // --- Обновлено ---
                 statusDiv.className = 'error';
-                // Проверяем, является ли error.message объектом
                 let errorMessage = error.message;
                 if (typeof error.message === 'object') {
                     try {
@@ -149,7 +248,7 @@
                         errorMessage = String(error.message);
                     }
                 }
-                statusDiv.textContent = `Ошибка обработки: ${errorMessage}`;
+                statusDiv.textContent = `Ошибка сопоставления: ${errorMessage}`;
                 resultsDiv.textContent = `Ошибка: ${errorMessage}`;
             }
         }
