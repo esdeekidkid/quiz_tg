@@ -69,7 +69,6 @@
 
                 const data = await response.json();
                 if (!response.ok) {
-                    // --- Обновлено ---
                     let errorMsg = 'Неизвестная ошибка сервера при загрузке PDF';
                     if (data && typeof data === 'object' && data.detail) {
                         if (typeof data.detail === 'string') {
@@ -92,9 +91,7 @@
                 statusDiv.textContent = `PDF загружен. Длина: ${data.length} символов. Сниппет: "${data.snippet.substring(0, 100)}${data.snippet.length > 100 ? '...' : ''}"`;
 
             } catch (error) {
-                // --- Обновлено ---
                 statusDiv.className = 'error';
-                // Проверяем, является ли error.message объектом
                 let errorMessage = error.message;
                 if (typeof error.message === 'object') {
                     try {
@@ -130,7 +127,6 @@
 
                 const data = await response.json();
                 if (!response.ok) {
-                    // --- Обновлено ---
                     let errorMsg = 'Неизвестная ошибка сервера при разборе HTML';
                     if (data && typeof data === 'object' && data.detail) {
                         if (typeof data.detail === 'string') {
@@ -170,9 +166,7 @@
                 processParsedBtn.style.display = 'inline-block';
 
             } catch (error) {
-                // --- Обновлено ---
                 statusDiv.className = 'error';
-                // Проверяем, является ли error.message объектом
                 let errorMessage = error.message;
                 if (typeof error.message === 'object') {
                     try {
@@ -188,7 +182,7 @@
         }
 
         async function processParsedQuiz() {
-            const statusDiv = document.getElementById('status-quiz-parse'); // Используем тот же статус, можно создать отдельный
+            const statusDiv = document.getElementById('status-quiz-parse');
             statusDiv.className = '';
             statusDiv.textContent = 'Сопоставление...';
             const resultsDiv = document.getElementById('results');
@@ -216,7 +210,6 @@
 
                 const data = await response.json();
                 if (!response.ok) {
-                    // --- Обновлено ---
                     let errorMsg = 'Неизвестная ошибка сервера при обработке вопросов';
                     if (data && typeof data === 'object' && data.detail) {
                         if (typeof data.detail === 'string') {
@@ -235,13 +228,11 @@
                 }
 
                 statusDiv.className = 'success';
-                statusDiv.textContent = 'Тест обработан успешно!';
-                resultsDiv.textContent = JSON.stringify(data.results, null, 2); // Форматированный JSON
+                statusDiv.textContent = 'Вопросы сопоставлены успешно!';
+                displayResults(data.results); // Вызов новой функции для отображения результатов
 
             } catch (error) {
-                // --- Обновлено ---
                 statusDiv.className = 'error';
-                // Проверяем, является ли error.message объектом
                 let errorMessage = error.message;
                 if (typeof error.message === 'object') {
                     try {
@@ -250,10 +241,139 @@
                         errorMessage = String(error.message);
                     }
                 }
-                statusDiv.textContent = `Ошибка обработки: ${errorMessage}`;
+                statusDiv.textContent = `Ошибка сопоставления: ${errorMessage}`;
                 resultsDiv.textContent = `Ошибка: ${errorMessage}`;
             }
         }
+
+        // --- НОВАЯ ФУНКЦИЯ ДЛЯ ОТОБРАЖЕНИЯ РЕЗУЛЬТАТОВ ---
+        function displayResults(results) {
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = ''; // Очистить предыдущие результаты
+
+            if (!results || results.length === 0) {
+                resultsDiv.textContent = 'Результаты не найдены.';
+                return;
+            }
+
+            results.forEach((result, index) => {
+                // Создать контейнер для вопроса
+                const questionBlock = document.createElement('div');
+                questionBlock.className = 'question-result-block';
+
+                // Заголовок вопроса
+                const questionHeader = document.createElement('h3');
+                questionHeader.textContent = `Вопрос ${index + 1}: ${result.question}`;
+                questionBlock.appendChild(questionHeader);
+
+                // Тип вопроса (опционально)
+                if (result.type) {
+                    const typeSpan = document.createElement('span');
+                    typeSpan.className = 'question-type';
+                    typeSpan.textContent = ` (Тип: ${result.type})`;
+                    questionHeader.appendChild(typeSpan);
+                }
+
+                // Создать список для опций
+                const optionsList = document.createElement('ul');
+                optionsList.className = 'options-list';
+
+                // Обработка опций (если они есть)
+                if (result.options && Array.isArray(result.options)) {
+                    result.options.forEach(optObj => {
+                        const listItem = document.createElement('li');
+                        listItem.className = 'option-item';
+
+                        // Текст опции
+                        const optionText = document.createElement('span');
+                        optionText.className = 'option-text';
+                        optionText.textContent = optObj.option;
+
+                        // Нормализованный балл (для понимания важности)
+                        const scoreBadge = document.createElement('span');
+                        scoreBadge.className = 'score-badge';
+                        scoreBadge.textContent = `(${optObj.norm.toFixed(3)})`;
+
+                        // Контейнер для текста и бейджа
+                        const textContainer = document.createElement('div');
+                        textContainer.appendChild(optionText);
+                        textContainer.appendChild(scoreBadge);
+
+                        listItem.appendChild(textContainer);
+
+                        // Проверить, является ли этот вариант выбранным (правильным)
+                        const isSelected = result.selected.some(selOpt => selOpt.option === optObj.option);
+
+                        if (isSelected) {
+                            // Если вариант выбран, добавить класс для подсветки
+                            listItem.classList.add('selected-option');
+                            // Добавить обработчик клика для отображения сниппетов
+                            listItem.addEventListener('click', () => {
+                                toggleSnippets(listItem, optObj.snippets); // Вызов функции для переключения сниппетов
+                            });
+                        }
+
+                        optionsList.appendChild(listItem);
+                    });
+                } else {
+                    // Если опции не переданы (например, для коротких ответов)
+                    const infoItem = document.createElement('li');
+                    infoItem.className = 'info-item';
+                    if (result.type === 'short' && result.answer) {
+                        infoItem.innerHTML = `<strong>Ответ:</strong> ${result.answer}`;
+                        if (result.excerpt) {
+                            infoItem.innerHTML += `<br><strong>Сниппет:</strong> ${result.excerpt}`;
+                        }
+                    } else {
+                        infoItem.textContent = 'Нет доступных вариантов для отображения.';
+                    }
+                    optionsList.appendChild(infoItem);
+                }
+
+                questionBlock.appendChild(optionsList);
+                resultsDiv.appendChild(questionBlock);
+            });
+        }
+
+        // --- ФУНКЦИЯ ДЛЯ ПЕРЕКЛЮЧЕНИЯ ОТРАЖЕНИЯ СНИППЕТОВ ---
+        function toggleSnippets(optionElement, snippets) {
+            // Найти существующий блок сниппетов для этого элемента
+            let snippetsDiv = optionElement.querySelector('.snippets-container');
+
+            if (snippetsDiv) {
+                // Если блок существует, переключить его видимость
+                if (snippetsDiv.style.display === 'none' || !snippetsDiv.style.display) {
+                    snippetsDiv.style.display = 'block';
+                } else {
+                    snippetsDiv.style.display = 'none';
+                }
+            } else {
+                // Если блока нет, создать его и добавить к элементу опции
+                snippetsDiv = document.createElement('div');
+                snippetsDiv.className = 'snippets-container';
+
+                if (snippets && Array.isArray(snippets) && snippets.length > 0) {
+                    // Отобразить наиболее релевантные сниппеты (например, первые 2)
+                    const topSnippets = snippets.slice(0, 2);
+                    topSnippets.forEach(snippetObj => {
+                        const snippetElement = document.createElement('p');
+                        snippetElement.className = 'snippet-text';
+                        // Показываем причину и сниппет
+                        snippetElement.textContent = `${snippetObj.why ? snippetObj.why + ': ' : ''}${snippetObj.excerpt || snippetObj.matched || 'N/A'}`;
+                        snippetsDiv.appendChild(snippetElement);
+                    });
+                } else {
+                    // Если сниппетов нет
+                    const noSnippets = document.createElement('p');
+                    noSnippets.className = 'snippet-text';
+                    noSnippets.textContent = 'Сниппеты не найдены.';
+                    snippetsDiv.appendChild(noSnippets);
+                }
+
+                optionElement.appendChild(snippetsDiv);
+            }
+        }
+
     </script>
 </body>
 </html>
