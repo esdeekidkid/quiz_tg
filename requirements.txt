@@ -1,9 +1,10 @@
 fastapi==0.115.0
 uvicorn[standard]==0.32.0
 pdfplumber==0.11.4
-PyMuPDF==1.24.13  # Добавлено: требуется для import fitz
 beautifulsoup4==4.12.3
 jinja2==3.1.4
 python-multipart==0.0.17
-# Явно указываем pydantic v1 для стабильности с fastapi 0.115.0 и совместимости с Python 3.11/3.12
+# Явно указываем pydantic v1 для стабильности с fastapi 0.115.0 и Python 3.11
 pydantic==1.10.18
+# PyMuPDF может потребоваться для pdfplumber, добавим явно
+PyMuPDF==1.24.13
