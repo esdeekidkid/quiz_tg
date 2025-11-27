@@ -17,6 +17,8 @@
   --results-bg: #f9f9f9;
   --disabled-bg: #cccccc;
   --disabled-cursor: not-allowed;
+  --selected-option-bg: #d4edda; /* Зелёный фон для правильных ответов */
+  --selected-option-border: #c3e6cb;
 }
 
 * {
@@ -134,14 +136,89 @@ button:disabled {
 }
 
 #results {
-  white-space: pre-wrap;
+  white-space: normal; /* Разрешаем перенос строк */
   background-color: var(--results-bg);
   padding: 20px;
   border: 1px solid #eee;
   border-radius: 4px;
-  max-height: 500px;
+  max-height: 600px; /* Увеличим высоту */
   overflow-y: auto;
-  font-family: monospace; /* Для лучшего отображения JSON */
   font-size: 14px;
   line-height: 1.5;
+}
+
+/* --- СТИЛИ ДЛЯ РЕЗУЛЬТАТОВ --- */
+.question-result-block {
+  margin-bottom: 25px;
+  padding: 15px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background-color: #ffffff;
+}
+
+.question-type {
+  font-size: 0.9em;
+  color: #666;
+  margin-left: 8px;
+}
+
+.options-list {
+  list-style-type: none;
+  padding: 0;
+  margin-top: 10px;
+}
+
+.option-item {
+  padding: 8px 12px;
+  margin-bottom: 5px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background-color: #f9f9f9;
+  cursor: pointer; /* Добавим курсор, так как элемент кликабелен */
+  transition: background-color 0.2s;
+}
+
+.option-item:hover {
+  background-color: #f0f0f0; /* Лёгкий ховер-эффект */
+}
+
+.selected-option {
+  background-color: var(--selected-option-bg);
+  border-color: var(--selected-option-border);
+  font-weight: bold;
+}
+
+.option-text {
+  margin-right: 10px;
+}
+
+.score-badge {
+  background-color: #e0e0e0;
+  color: #333;
+  padding: 2px 6px;
+  border-radius: 10px;
+  font-size: 0.8em;
+  font-weight: normal;
+}
+
+.snippets-container {
+  margin-top: 8px;
+  padding: 10px;
+  background-color: #eef7ee;
+  border: 1px dashed #4CAF50;
+  border-radius: 4px;
+  font-size: 0.9em;
+}
+
+.snippet-text {
+  margin: 0 0 5px 0;
+  padding: 2px 0;
+}
+
+.info-item {
+  padding: 8px 12px;
+  margin-bottom: 5px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background-color: #f9f9f9;
 }
