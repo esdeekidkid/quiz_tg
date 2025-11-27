@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: quiz-helper
+    env: python
+    plan: free
+    runtime: python-3.11
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn -w 1 -k uvicorn.workers.UvicornWorker --max-requests 100 --max-requests-jitter 10 main:app
+    memoryLimit: 512
+    diskSize: 1
+    envVars:
+      - key: VITE_SUPABASE_URL
+        scope: build,runtime
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        scope: build,runtime
+        sync: false

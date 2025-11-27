@@ -23,8 +23,9 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # --- Supabase configuration ---
 SUPABASE_URL = os.getenv("VITE_SUPABASE_URL", "https://aozxmeovifobnfspfoqt.supabase.co")
-SUPABASE_KEY = os.getenv("VITE_SUPABASE_SUPABASE_ANON_KEY", "")
-SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", SUPABASE_KEY)
+SUPABASE_KEY = os.getenv("VITE_SUPABASE_ANON_KEY") or os.getenv("VITE_SUPABASE_SUPABASE_ANON_KEY", "")
+if not SUPABASE_KEY:
+    raise ValueError("Missing VITE_SUPABASE_ANON_KEY in environment")
 
 # --- LRU Cache for normalized text (max 10 items, ~50MB limit per cache)
 @lru_cache(maxsize=10)
@@ -130,36 +131,29 @@ def detect_question_type(qtext):
 
 async def save_to_supabase(table: str, data: dict):
     try:
-        headers = {
-            "Authorization": f"Bearer {SUPABASE_KEY}",
-            "Content-Type": "application/json",
-            "apikey": SUPABASE_KEY
-        }
+        action = "save_session" if table == "quiz_sessions" else "save_results"
         async with httpx.AsyncClient(timeout=10) as client:
             response = await client.post(
-                f"{SUPABASE_URL}/rest/v1/{table}",
-                json=data,
-                headers=headers
+                f"{SUPABASE_URL}/functions/v1/quiz_storage",
+                json={"action": action, "data": data},
+                headers={"Authorization": f"Bearer {SUPABASE_KEY}"}
             )
-            return response.status_code == 201
+            return response.status_code == 200
     except Exception as e:
         print(f"Error saving to Supabase: {e}")
         return False
 
 async def get_from_supabase(table: str, session_id: str):
     try:
-        headers = {
-            "Authorization": f"Bearer {SUPABASE_KEY}",
-            "apikey": SUPABASE_KEY
-        }
         async with httpx.AsyncClient(timeout=10) as client:
-            response = await client.get(
-                f"{SUPABASE_URL}/rest/v1/{table}?session_id=eq.{session_id}",
-                headers=headers
+            response = await client.post(
+                f"{SUPABASE_URL}/functions/v1/quiz_storage",
+                json={"action": "get_session", "session_id": session_id},
+                headers={"Authorization": f"Bearer {SUPABASE_KEY}"}
             )
             if response.status_code == 200:
-                data = response.json()
-                return data[0] if data else None
+                result = response.json()
+                return result.get("data")
             return None
     except Exception as e:
         print(f"Error getting from Supabase: {e}")
