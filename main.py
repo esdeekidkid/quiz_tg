@@ -1,338 +1,289 @@
-# main.py
-import io # <-- Добавлен импорт io
+# ============================
+# main.py — Полностью исправленный
+# ============================
+
+import io
+import re
+import pdfplumber
+from typing import List, Optional
+
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, Field
-from typing import Optional, List
-import pdfplumber
+from fastapi.templating import Jinja2Templates
+
+from pydantic import BaseModel
 from bs4 import BeautifulSoup
-import re
-import json
 
-app = FastAPI(title="Quiz Helper API") # <-- 1. Определяем app
 
-# Подключаем папки templates и static
+# ----------------------------------------------------------
+# ИНИЦИАЛИЗАЦИЯ СЕРВЕРА
+# ----------------------------------------------------------
+
+app = FastAPI(title="Quiz Helper")
+
 templates = Jinja2Templates(directory="templates")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# --- Глобальное хранилище для сессии (в реальном проекте используйте Redis или БД)
-SESSION_STORAGE = {}
+SESSION_STORAGE = {}   # Хранит PDF-текст (временно, без базы)
 
-# --- Утилиты ---
 
-def normalize_text(s):
+# ----------------------------------------------------------
+# Вспомогательные функции
+# ----------------------------------------------------------
+
+def normalize_text(s: str) -> str:
     if not s:
         return ""
-    return re.sub(r'\s+', ' ', s).strip().lower()
+    s = s.lower()
+    s = re.sub(r"\s+", " ", s)
+    return s.strip()
+
 
 def excerpt_around(text, idx, length=120):
-    if not text:
-        return ""
     start = max(0, idx - length // 2)
     end = min(len(text), idx + length // 2)
     return text[start:end].replace("\n", " ").replace("\r", " ")
 
-def find_definition_in_lecture(lecture, term):
-    L = lecture
-    term_escaped = re.escape(term)
-    # Ищем "TERM - это", "TERM — это", "TERM это", "это TERM" и т.д.
-    patterns = [
-        r"([А-Яа-яA-Za-z0-9\-\s]{1,80})[\-—]\s*это",
-        rf"({term_escaped})\s*(?:[:\-—])\s*это",
-        rf"{term_escaped}\s+представляет собой",
-        rf"это\s+({term_escaped})",
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, L, re.IGNORECASE)
-        if match:
-            return {
-                "found": True,
-                "match": match.group(0),
-                "snippet": excerpt_around(L, match.start())
-            }
-    return {"found": False}
 
-def score_option_by_lecture(lecture, option):
+def score_option_by_lecture(lecture: str, option: str):
     L = normalize_text(lecture)
     opt = normalize_text(option)
 
     score = 0
     snippets = []
 
-    # точное вхождение опции
-    exact_matches = re.findall(re.escape(opt), L)
-    exact_count = len(exact_matches)
-    if exact_count > 0:
-        score += 3 * (1 + exact_count)**0.5  # Логарифмическое начисление
-        first_match_idx = L.find(opt)
-        if first_match_idx != -1:
-            snippets.append({"why": "exact", "excerpt": excerpt_around(L, first_match_idx)})
-
-    # фраза типа "opt представляет собой" или "opt - это"
-    def_pattern = rf"{re.escape(opt)}\s+(представляет собой|является|это|характеризуется|обозначает|означает)"
-    if re.search(def_pattern, lecture, re.IGNORECASE):
+    # 1) Прямое совпадение
+    idx = L.find(opt)
+    if idx != -1:
         score += 3
-        match = re.search(def_pattern, lecture, re.IGNORECASE)
+        snippets.append({"why": "exact", "excerpt": excerpt_around(L, idx)})
+
+    # 2) "... представляет собой", "... является ..."
+    def_pattern = rf"{re.escape(opt)}\s+(представляет собой|является|это)"
+    match = re.search(def_pattern, lecture, re.IGNORECASE)
+    if match:
+        score += 3
         snippets.append({"why": "definition", "excerpt": excerpt_around(lecture, match.start())})
 
-    # пересечение слов
+    # 3) Пересечение слов
     opt_words = set(opt.split())
-    if opt_words:
-        matched_words = len(opt_words.intersection(set(L.split())))
-        ratio = matched_words / len(opt_words)
-        score += ratio * 2
-        if ratio > 0:
-            snippets.append({"why": "words", "matched": f"{matched_words}/{len(opt_words)}"})
+    L_words = set(L.split())
+    inter = len(opt_words & L_words)
 
-    # небольшой бонус за длинную опцию, если она встречается
-    if len(opt) > 30 and exact_count > 0:
-        score += 0.5
+    if inter > 0:
+        score += (inter / len(opt_words)) * 2
+        snippets.append({"why": "word-match", "matched": f"{inter}/{len(opt_words)}"})
 
     return {"score": score, "snippets": snippets}
 
-def detect_question_type(qtext):
-    q = normalize_text(qtext)
-    single_markers = ['какое из', 'какой из', 'как называется', 'что из', 'выберите один', 'выберите', 'какое слово пропущено']
-    for marker in single_markers:
-        if marker in q:
-            return 'single'
 
-    multi_markers = ['какие', 'перечисл', 'классификация', 'входят в', 'относятся', 'какие действия', 'назовите', 'перечислите', 'признаков', 'включают']
-    for marker in multi_markers:
-        if marker in q:
-            return 'multi'
+def detect_question_type(text: str) -> str:
+    t = normalize_text(text)
 
-    if 'единиц' in q or 'единицы измерения' in q or 'единицы' in q:
-        return 'units'
+    if any(x in t for x in [
+        "какое слово", "введите", "впишите", "короткий ответ"
+    ]):
+        return "short"
 
-    if re.search(r'(какое слово пропущено|какое слово|впишите|введите|короткий ответ|ответ)', qtext, re.IGNORECASE):
-        return 'short'
+    if any(x in t for x in [
+        "классификация", "перечислите", "какие", "относятся"
+    ]):
+        return "multi"
 
-    if 'что' in q or 'определ' in q:
-        return 'single'
+    if "единиц" in t or "единицы измерения" in t:
+        return "units"
 
-    return 'single'
+    return "single"
 
-def parse_html_quiz(html):
-    soup = BeautifulSoup(html, 'html.parser')
+
+def parse_html_quiz(html: str):
+    soup = BeautifulSoup(html, "html.parser")
+
     questions = []
 
-    # Найдём *все* элементы с классом 'que' - это основной контейнер вопроса в Moodle
-    que_elements = soup.find_all(class_='que')
+    que_blocks = soup.find_all(class_="que")
+    for block in que_blocks:
+        # Текст вопроса
+        qtext_el = block.find(class_="qtext")
+        qtext = qtext_el.get_text(" ", strip=True) if qtext_el else "Вопрос"
 
-    for el in que_elements:
-        q = {}
-        # Вопрос: находим текст вопроса внутри .qtext
-        qtext_el = el.find(class_='qtext')
-        if qtext_el:
-            # Убираем label и input из текста вопроса, если они есть
-            for tag in qtext_el.find_all(['label', 'input']):
-                tag.decompose()
-            q['question'] = qtext_el.get_text(strip=True).replace('\n', ' ')
-        else:
-            q['question'] = f"Вопрос {len(questions) + 1}" # Запасной вариант
-
-        # Опции: находим внутри .answer или внутри .ablock
+        # Варианты
         opts = []
-        # Сначала пробуем .answer
-        answer_divs = el.find_all(class_='answer')
-        for div in answer_divs:
-            # Ищем label с data-region="answer-label" - это современный способ в Moodle
-            labels = div.find_all(attrs={'data-region': 'answer-label'})
-            for label in labels:
-                opt_text = label.get_text(strip=True).replace('\n', ' ')
-                if opt_text:
-                    opts.append(opt_text)
-            # Ищем старые label
-            for label in div.find_all('label'):
-                # Проверяем, не является ли он частью .qtext или другого системного блока
-                if not label.find_parent(class_='qtext'):
-                    opt_text = label.get_text(strip=True).replace('\n', ' ')
-                    if opt_text and opt_text not in opts:
-                        opts.append(opt_text)
+        answer_divs = block.find_all(class_="answer")
 
-        q['options'] = list(set(opts)) # dedupe
-        # Проверим, является ли коротким ответом
-        q['is_short'] = bool(el.find('input', type='text')) or 'shortanswer' in el.get('class', [])
-        questions.append(q)
+        for ad in answer_divs:
+            labels = ad.find_all(attrs={"data-region": "answer-label"})
+            for lb in labels:
+                t = lb.get_text(strip=True)
+                if t:
+                    opts.append(t)
 
-    # Если не нашли по классам, ищем вручную по эвристике
-    if not questions:
-        # Простая эвристика: все <p> до <input> как один вопрос
-        all_ps = soup.find_all('p')
-        all_inputs = soup.find_all('input', type='radio') + soup.find_all('input', type='checkbox')
-        # Это сложнее, но для простоты:
-        for p in all_ps:
-            if p.find('input'): # Если внутри p есть input - это опция
-                 continue
-            question_text = p.get_text(strip=True).replace('\n', ' ')
-            if question_text:
-                 # Попробуем найти опции рядом
-                 options = []
-                 for inp in all_inputs:
-                     label = soup.find('label', attrs={'for': inp.get('id')})
-                     if label:
-                         opt_text = label.get_text(strip=True).replace('\n', ' ')
-                         if opt_text:
-                             options.append(opt_text)
-                 questions.append({
-                     "question": question_text,
-                     "options": list(set(options)),
-                     "is_short": bool(soup.find('input', type='text'))
-                 })
-                 break # Только первый найденный вопрос так
+            for lb in ad.find_all("label"):
+                t = lb.get_text(strip=True)
+                if t and t not in opts:
+                    opts.append(t)
+
+        # Удаление дубликатов
+        opts = list(dict.fromkeys(opts))
+
+        questions.append({
+            "question": qtext,
+            "options": opts,
+            "is_short": bool(block.find("input", {"type": "text"}))
+        })
 
     return questions
 
 
-# --- Маршруты ---
+# ----------------------------------------------------------
+# MODELS
+# ----------------------------------------------------------
+
+class HtmlPayload(BaseModel):
+    html: str
+
+
+class ProcessQuizData(BaseModel):
+    questions: List[dict]
+    lecture_text: str
+
+
+# ----------------------------------------------------------
+# ROUTES
+# ----------------------------------------------------------
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
+
+# --- Загружаем PDF и извлекаем текст ---
 @app.post("/api/extract-text-from-pdf/")
 async def extract_text_from_pdf(file: UploadFile = File(...)):
     if file.content_type != "application/pdf":
-        raise HTTPException(status_code=400, detail="Файл должен быть PDF")
+        raise HTTPException(status_code=400, detail="Файл должен быть PDF.")
 
     content = await file.read()
 
-    # --- Вот тут исправление для pdfplumber ---
     try:
         with pdfplumber.open(io.BytesIO(content)) as pdf:
             text = ""
             for page in pdf.pages:
-                page_text = page.extract_text()
-                if page_text: # Проверяем, что текст не None или пустой
-                    text += page_text + " "
+                t = page.extract_text()
+                if t:
+                    text += t + "\n"
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Ошибка при извлечении текста: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ошибка PDF: {e}")
 
-    # Сохраняем текст в сессию (упрощённо, используя IP)
-    # В реальности используйте JWT токены или сессии
-    session_key = "default" # Упрощённо, можно использовать request.client.host
-    SESSION_STORAGE[session_key] = text
+    SESSION_STORAGE["default"] = text
 
     return {
         "text": text,
         "length": len(text),
-        "snippet": text[:200]
+        "snippet": text[:300]
     }
 
-# --- Новый маршрут для парсинга HTML ---
-@app.post("/api/parse-quiz-html/") # <-- 2. Используем app
-async def parse_quiz_html( dict): # Принимаем JSON из тела запроса
-    html = data.get("html", "")
-    if not html:
-        raise HTTPException(status_code=400, detail="Поле 'html' отсутствует или пусто.")
 
-    # --- Попробуем распарсить HTML ---
+# --- Парсим HTML теста ---
+@app.post("/api/parse-quiz-html/")
+async def parse_quiz_html(payload: HtmlPayload):
+    html = payload.html
+
+    if not html:
+        raise HTTPException(status_code=400, detail="Поле 'html' пустое")
+
     try:
         questions = parse_html_quiz(html)
     except Exception as e:
-        # Если parse_html_quiz выбросит исключение (хотя мы его и обернули внутри), ловим здесь
-        print(f"Error in parse_html_quiz: {e}") # Логирование ошибки
-        raise HTTPException(status_code=500, detail=f"Ошибка при парсинге HTML теста: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ошибка при парсинге HTML: {e}")
 
     if not questions:
-        raise HTTPException(status_code=400, detail="В HTML не найдено ни одного вопроса. Убедитесь, что HTML содержит правильную структуру теста (например, div с классом 'que').")
+        raise HTTPException(status_code=400, detail="В HTML не найдено ни одного вопроса")
 
     return {"ok": True, "questions": questions}
 
 
-# --- Обновлённый маршрут для обработки квиза (принимает уже распарсенные вопросы) ---
-class ProcessQuizData(BaseModel):
-    questions: List[dict] # Список вопросов в формате, как возвращается из /api/parse-quiz-html/
-    lecture_text: str
-
+# --- Проводим анализ: находим правильные ответы ---
 @app.post("/api/process-quiz/")
-async def process_quiz( ProcessQuizData): # <-- 3. Используем app
-    # --- Валидация данных вручную ---
-    questions = data.questions
-    lecture_text = data.lecture_text
+async def process_quiz(payload: ProcessQuizData):
+    questions = payload.questions
+    lecture_text = payload.lecture_text
 
     if not lecture_text:
-        raise HTTPException(status_code=400, detail="Поле 'lecture_text' отсутствует или пусто. Сначала загрузите PDF-лекцию и убедитесь, что она успешно обработалась.")
+        raise HTTPException(status_code=400, detail="lecture_text отсутствует")
 
     if not questions:
-        raise HTTPException(status_code=400, detail="Поле 'questions' отсутствует или пусто. Сначала распарсите HTML теста.")
+        raise HTTPException(status_code=400, detail="questions отсутствуют")
 
     results = []
 
     for q in questions:
         qtext = q.get("question", "")
-        qtype = detect_question_type(qtext)
         opts = q.get("options", [])
         is_short = q.get("is_short", False)
 
-        if is_short or qtype == 'short':
-            lec = lecture_text
-            # Ищем определения
-            def_regex = r"([А-Яа-яЁёA-Za-z0-9 \-]{2,80})\s*[—\-:]\s*это"
-            match = re.search(def_regex, lec, re.IGNORECASE)
-            found = None
-            if match:
-                candidate = match.group(1).strip()
-                if len(candidate.split()) <= 6: # Ограничение на длину
-                    found = {"answer": candidate, "excerpt": excerpt_around(lec, match.start())}
+        qtype = detect_question_type(qtext)
 
-            if not found:
-                 # Попробуем "TERM это"
-                 alt_regex = r"([А-Яа-яЁёA-Za-z0-9 \-]{2,60})\s+это\s+"
-                 alt_match = re.search(alt_regex, lec, re.IGNORECASE)
-                 if alt_match:
-                     candidate = alt_match.group(1).strip()
-                     found = {"answer": candidate, "excerpt": excerpt_around(lec, alt_match.start())}
+        # ------------------------------
+        # короткий ответ
+        # ------------------------------
+        if is_short or qtype == "short":
+            # ищем "... — это" или "... - это"
+            m = re.search(r"([А-Яа-яA-Za-z0-9 \-]{3,60})\s*[—\-:]\s*это", lecture_text)
+            if m:
+                ans = m.group(1).strip()
+                results.append({
+                    "question": qtext,
+                    "type": "short",
+                    "answer": ans,
+                    "excerpt": excerpt_around(lecture_text, m.start())
+                })
+                continue
 
             results.append({
                 "question": qtext,
                 "type": "short",
-                "answer": found["answer"] if found else "",
-                "excerpt": found["excerpt"] if found else "",
+                "answer": "",
+                "excerpt": ""
             })
             continue
 
-        # Обработка вопросов с опциями
+        # ------------------------------
+        # вопросы с вариантами
+        # ------------------------------
         scored = []
         for opt in opts:
-            score_result = score_option_by_lecture(lecture_text, opt)
+            sc = score_option_by_lecture(lecture_text, opt)
             scored.append({
                 "option": opt,
-                "score": score_result["score"],
-                "snippets": score_result["snippets"]
+                "score": sc["score"],
+                "snippets": sc["snippets"]
             })
 
         max_score = max([s["score"] for s in scored], default=1)
-        for s in scored:
-            s["norm"] = round(s["score"] / max_score, 3) if max_score > 0 else 0
 
-        selected = []
-        if qtype == 'single':
-            top = max(scored, key=lambda x: x["score"], default=None)
-            if top:
-                selected = [{"option": top["option"], "score": top["norm"], "snippets": top["snippets"]}]
-        elif qtype == 'units':
+        for s in scored:
+            s["norm"] = round(s["score"] / max_score, 3)
+
+        if qtype == "single":
+            selected = [max(scored, key=lambda x: x["score"])]
+
+        elif qtype == "units":
             selected = [s for s in scored if s["norm"] >= 0.15]
-            selected.sort(key=lambda x: x["norm"], reverse=True)
-        else: # multi
-            candidates = [s for s in scored if s["norm"] >= 0.55]
-            if not candidates:
-                fallback = [s for s in scored if s["norm"] >= 0.25]
-                selected = fallback
-            else:
-                selected = candidates
-            selected.sort(key=lambda x: x["norm"], reverse=True)
+
+        else:  # multi
+            selected = [s for s in scored if s["norm"] >= 0.55]
+            if not selected:
+                selected = [s for s in scored if s["norm"] >= 0.3]
+
+        selected.sort(key=lambda x: x["norm"], reverse=True)
 
         results.append({
             "question": qtext,
             "type": qtype,
-            "options": [{"option": s["option"], "norm": s["norm"], "snippets": s["snippets"]} for s in scored],
-            "selected": [{"option": s["option"], "score": s["score"], "snippets": s["snippets"]} for s in selected]
+            "options": scored,
+            "selected": selected
         })
 
     return {"ok": True, "results": results}
-
-# Запуск: uvicorn main:app --host 0.0.0.0 --port 10000
