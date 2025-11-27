@@ -204,15 +204,18 @@ button:disabled {
 .snippets-container {
   margin-top: 8px;
   padding: 10px;
-  background-color: #eef7ee;
-  border: 1px dashed #4CAF50;
+  background-color: #eef7ee; /* Светло-зелёный фон */
+  border: 1px dashed #4CAF50; /* Пунктирная граница */
   border-radius: 4px;
   font-size: 0.9em;
+  max-height: 150px; /* Ограничим высоту */
+  overflow-y: auto; /* Добавим прокрутку, если текст длинный */
 }
 
 .snippet-text {
-  margin: 0 0 5px 0;
-  padding: 2px 0;
+  margin: 0 0 8px 0; /* Увеличим отступ между сниппетами */
+  padding: 4px 0; /* Немного отступа внутри */
+  line-height: 1.4; /* Улучшим читаемость */
 }
 
 .info-item {
