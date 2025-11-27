@@ -4,7 +4,8 @@ pdfplumber==0.11.4
 beautifulsoup4==4.12.3
 jinja2==3.1.4
 python-multipart==0.0.17
-# Явно указываем pydantic v1 для стабильности с fastapi 0.115.0 и Python 3.11
-pydantic==1.10.18
-# PyMuPDF может потребоваться для pdfplumber, добавим явно
+# Используем Pydantic v2 для совместимости с FastAPI 0.115.0
+pydantic==2.9.2
+pydantic-settings==2.5.2
+# PyMuPDF для pdfplumber
 PyMuPDF==1.24.13
